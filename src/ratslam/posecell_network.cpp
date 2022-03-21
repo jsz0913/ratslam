@@ -1,30 +1,3 @@
-/*
- * openRatSLAM
- *
- * utils - General purpose utility helper functions mainly for angles and readings settings
- *
- * Copyright (C) 2012
- * David Ball (david.ball@qut.edu.au) (1), Scott Heath (scott.heath@uqconnect.edu.au) (2)
- *
- * RatSLAM algorithm by:
- * Michael Milford (1) and Gordon Wyeth (1) ([michael.milford, gordon.wyeth]@qut.edu.au)
- *
- * 1. Queensland University of Technology, Australia
- * 2. The University of Queensland, Australia
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
 #include "posecell_network.h"
 #include "../utils/utils.h"
 
@@ -46,6 +19,7 @@ PosecellNetwork::PosecellNetwork(ptree settings)
    */
   get_setting_from_ptree(PC_DIM_XY, settings, "pc_dim_xy", 21);
   get_setting_from_ptree(PC_DIM_TH, settings, "pc_dim_th", 36);
+	
   get_setting_from_ptree(PC_W_E_DIM, settings, "pc_w_e_dim", 7);
   get_setting_from_ptree(PC_W_I_DIM, settings, "pc_w_i_dim", 5);
   get_setting_from_ptree(PC_W_E_VAR, settings, "pc_w_e_var", 1);
@@ -71,7 +45,6 @@ PosecellNetwork::PosecellNetwork(ptree settings)
 
   odo_update = false;
   vt_update = false;
-
 }
 
 void PosecellNetwork::pose_cell_builder()
@@ -82,29 +55,30 @@ void PosecellNetwork::pose_cell_builder()
 
   // set the sizes
   posecells_memory_size = sizeof(Posecell) * PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
+	
   posecells_elements = PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
 
-  // allocate the memory
+  // allocate the memory 一级指针  zero all the memory
   posecells_memory = (Posecell *)malloc((size_t)posecells_memory_size);
   pca_new_memory = (Posecell *)malloc((size_t)posecells_memory_size);
-
-  // zero all the memory
   memset(posecells_memory, 0, (size_t)posecells_memory_size);
   memset(pca_new_memory, 0, (size_t)posecells_memory_size);
 
   // allocate first level pointers
+  // 三级指针存的是PC_DIM_TH个二级指针
   posecells = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
   pca_new = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
 
   for (i = 0; i < PC_DIM_TH; i++)
   {
     // allocate second level pointers
+    // 二级指针存的是PC_DIM_XY个一级指针
     posecells[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
     pca_new[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
-
     for (j = 0; j < PC_DIM_XY; j++)
     {
       // TRICKY! point second level pointers at already allocated memory
+      // 一级指针指向一行   i = PC_DIM_TH   j = PC_DIM_XY
       posecells[i][j] = &posecells_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
       pca_new[i][j] = &pca_new_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
     }
@@ -209,6 +183,7 @@ void PosecellNetwork::pose_cell_builder()
   }
 }
 
+	
 PosecellNetwork::~PosecellNetwork()
 {
   int i;
