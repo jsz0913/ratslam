@@ -42,11 +42,61 @@ PosecellNetwork::PosecellNetwork(ptree settings)
   odo_update = false;
   vt_update = false;
 }
+
+////////////////////// 回调函数 ////////////////////////
+// visual template process 
+// 1.create visual template
+// 2.inject pose cell and decay visual template
+void PosecellNetwork::on_view_template(unsigned int vt, double vt_rad)
+{
+  PosecellVisualTemplate * pcvt;
+  // a new template or not according to size
+  if (vt >= visual_templates.size())
+  {
+    create_view_template();
+    assert(vt == visual_templates.size()-1);
+  }
+  else
+  {
+    pcvt = &visual_templates[vt];
+    // this prevents energy injected in recently created vt's
+    if (vt < (visual_templates.size() - 10))
+    {
+      if (vt != current_vt)
+      {
+      } else {
+        pcvt->decay += VT_ACTIVE_DECAY;
+      }
+	    
+      // this line is magic. ask michael about it
+      double energy = PC_VT_INJECT_ENERGY * 1.0 / 30.0 * (30.0 - exp(1.2 * pcvt->decay));
+      if (energy > 0)
+      {
+	  vt_delta_pc_th = vt_rad / (2.0*M_PI) * PC_DIM_TH;
+	  double pc_th_corrected = pcvt->pc_th + vt_rad / (2.0*M_PI) * PC_DIM_TH;
+	  if (pc_th_corrected < 0) 
+		pc_th_corrected = PC_DIM_TH + pc_th_corrected;
+	  if (pc_th_corrected >= PC_DIM_TH)
+	 	pc_th_corrected = pc_th_corrected - PC_DIM_TH;
+          inject((int)pcvt->pc_x, (int)pcvt->pc_y, (int)pc_th_corrected, energy);
+      }
+    }
+  }
 	
+  for (unsigned int i = 0; i < visual_templates.size(); i++)
+  {
+    visual_templates[i].decay -= PC_VT_RESTORE;
+    if (visual_templates[i].decay < VT_ACTIVE_DECAY)
+      visual_templates[i].decay = VT_ACTIVE_DECAY;
+  }
+  prev_vt = current_vt;
+  current_vt = vt;
+  vt_update = true;
+}
 	
 void PosecellNetwork::on_odo(double vtrans, double vrot, double time_diff_s)
 {
-  vtrans = vtrans * time_diff_s;
+  vtrans = vtrans * time_diff_s;// time_diff_s
   vrot = vrot * time_diff_s;
   excite();
   inhibit();
@@ -57,6 +107,127 @@ void PosecellNetwork::on_odo(double vtrans, double vrot, double time_diff_s)
   odo_update = true;
 }
 
+PosecellNetwork::PosecellAction PosecellNetwork::get_action()
+{
+  PosecellExperience * experience;
+  double delta_pc;
+	
+  PosecellAction action = NO_ACTION;
+  if (odo_update && vt_update)
+  {
+    odo_update = false;
+    vt_update = false;
+  } else {
+	return action;
+  }
+  if (visual_templates.size() == 0)
+  {
+    action = NO_ACTION;
+    return action;
+  }
+  if (experiences.size() == 0)
+  {
+    create_experience();
+    action = CREATE_NODE;
+	  
+  } else {
+    experience = &experiences[current_exp];
+    delta_pc = get_delta_pc(experience->x_pc, experience->y_pc, experience->th_pc);
+    PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
+    if (pcvt->exps.size() == 0)
+    {
+      create_experience();
+      action = CREATE_NODE;
+     }
+    else if (delta_pc > EXP_DELTA_PC_THRESHOLD || current_vt != prev_vt)
+    {
+      // go through all the exps associated with the current view and find the one with the closest delta_pc
+      int matched_exp_id = -1;
+      unsigned int i;
+      int min_delta_id = -1;
+      double min_delta = DBL_MAX;
+      double delta_pc;
+    // find the closest experience in pose cell space
+      for (i = 0; i < pcvt->exps.size(); i++)
+      {
+        // make sure we aren't comparing to the current experience
+        if (current_exp == pcvt->exps[i])
+          continue;
+        experience = &experiences[pcvt->exps[i]];
+	delta_pc = get_delta_pc(experience->x_pc, experience->y_pc, experience->th_pc);
+
+        if (delta_pc < min_delta)
+        {
+          min_delta = delta_pc;
+          min_delta_id = pcvt->exps[i];
+        }
+      }
+
+      // if an experience is closer than the thres create a link
+      if (min_delta < EXP_DELTA_PC_THRESHOLD)
+      {
+        matched_exp_id = min_delta_id;
+        action = CREATE_EDGE;
+      }
+
+      if (current_exp != (unsigned)matched_exp_id)
+      {
+        if (matched_exp_id == -1)
+        {
+          create_experience();
+          action = CREATE_NODE;
+        }
+        else
+        {
+          current_exp = matched_exp_id;
+          if (action == NO_ACTION)
+          {
+            action = SET_NODE;
+          }
+        }
+      }
+      else if (current_vt == prev_vt)
+      {
+        create_experience();
+        action = CREATE_NODE;
+      }
+    }
+  }
+  return action;
+}
+// 只存互相的id，因为都在类中
+void PosecellNetwork::create_experience()
+{
+  PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
+	
+  experiences.resize(experiences.size() + 1);
+  current_exp = experiences.size() - 1;
+	
+  PosecellExperience * exp = &experiences[current_exp];
+  exp->x_pc = x();
+  exp->y_pc = y();
+  exp->th_pc = th();
+  exp->vt_id = current_vt;
+	
+  pcvt->exps.push_back(current_exp);
+}
+	
+void PosecellNetwork::create_view_template()
+{
+  // 指针指向STL中最新位置
+  PosecellVisualTemplate * pcvt;
+  visual_templates.resize(visual_templates.size() + 1);
+  pcvt = &visual_templates[visual_templates.size() - 1];
+  pcvt->pc_x = x();
+  pcvt->pc_y = y();
+  pcvt->pc_th = th();
+  pcvt->decay = VT_ACTIVE_DECAY;
+}
+
+
+	
+//////////////////////////////////////////////////
+	
 bool PosecellNetwork::inject(int act_x, int act_y, int act_z, double energy)
 {
 
@@ -376,21 +547,7 @@ bool PosecellNetwork::pose_cell_inhibit_helper(int x, int y, int z)
   return true;
 }
 	
-void PosecellNetwork::create_experience()
-{
-  PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
-  experiences.resize(experiences.size() + 1);
-  current_exp = experiences.size() - 1;
-  PosecellExperience * exp = &experiences[current_exp];
-  exp->x_pc = x();
-  exp->y_pc = y();
-  exp->th_pc = th();
-  exp->vt_id = current_vt;
-  pcvt->exps.push_back(current_exp);
-}
-
-	
-	
+// 完备复刻
 double PosecellNetwork::find_best()
 {
   int i, j, k;
@@ -399,7 +556,7 @@ double PosecellNetwork::find_best()
   double * x_sums, *y_sums, *z_sums;
   double sum_x1, sum_x2, sum_y1, sum_y2;
 
-  // % find the max activated cell
+  // find the max activated cell
   double max = 0;
   for (k = 0; k < PC_DIM_TH; k++)
   {
@@ -418,14 +575,12 @@ double PosecellNetwork::find_best()
     }
   }
 
-  //  % take the max activated cell +- AVG_CELL in 3d space
-  //  % get the sums for each axis
+  //  take the max activated cell +- AVG_CELL in 3d space get the sums for each axis
+  //  直接求和
   memset(pca_new_memory, 0, posecells_memory_size);
-
-  x_sums = pca_new[0][0];
+  x_sums = pca_new[0][0];// 长度均为PC_DIM_XY
   y_sums = pca_new[1][0];
   z_sums = pca_new[2][0];
-
   for (k = (int)th; k < th + PC_CELLS_TO_AVG * 2 + 1; k++)
   {
     for (j = (int)y; j < y + PC_CELLS_TO_AVG * 2 + 1; j++)
@@ -442,7 +597,7 @@ double PosecellNetwork::find_best()
     }
   }
 
-  //  % now find the (x, y, th) using population vector decoding to handle the wrap around
+  // now find the (x, y, th) using population vector decoding to handle the wrap around
   sum_x1 = 0;
   sum_x2 = 0;
   sum_y1 = 0;
@@ -464,13 +619,11 @@ double PosecellNetwork::find_best()
   {
     x -= PC_DIM_XY;
   }
-
   y = atan2(sum_y1, sum_y2) * (PC_DIM_XY) / (2.0 * M_PI) - 1.0;
   while (y < 0)
   {
     y += PC_DIM_XY;
   }
-
   while (y > PC_DIM_XY)
   {
     y -= PC_DIM_XY;
@@ -843,165 +996,6 @@ PosecellNetwork::~PosecellNetwork()
   free(pca_new_memory);
 }
 	
-
-PosecellNetwork::PosecellAction PosecellNetwork::get_action()
-{
-  PosecellExperience * experience;
-  double delta_pc;
-  PosecellAction action = NO_ACTION;
-
-  if (odo_update && vt_update)
-  {
-    odo_update = false;
-    vt_update = false;
-
-  } else {
-	return action;
-  }
-
-  if (visual_templates.size() == 0)
-  {
-    action = NO_ACTION;
-    return action;
-  }
-
-  if (experiences.size() == 0)
-  {
-    create_experience();
-    action = CREATE_NODE;
-  } else {
-    experience = &experiences[current_exp];
-
-    delta_pc = get_delta_pc(experience->x_pc, experience->y_pc, experience->th_pc);
-
-    PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
-    if (pcvt->exps.size() == 0)
-    {
-      create_experience();
-      action = CREATE_NODE;
-     }
-    else if (delta_pc > EXP_DELTA_PC_THRESHOLD || current_vt != prev_vt)
-    {
-      // go through all the exps associated with the current view and find the one with the closest delta_pc
-      int matched_exp_id = -1;
-      unsigned int i;
-      int min_delta_id = -1;
-      double min_delta = DBL_MAX;
-      double delta_pc;
-
-    // find the closest experience in pose cell space
-      for (i = 0; i < pcvt->exps.size(); i++)
-      {
-        // make sure we aren't comparing to the current experience
-        if (current_exp == pcvt->exps[i])
-          continue;
-
-        experience = &experiences[pcvt->exps[i]];
-        delta_pc = get_delta_pc(experience->x_pc, experience->y_pc, experience->th_pc);
-
-        if (delta_pc < min_delta)
-        {
-          min_delta = delta_pc;
-          min_delta_id = pcvt->exps[i];
-        }
-      }
-
-      // if an experience is closer than the thres create a link
-      if (min_delta < EXP_DELTA_PC_THRESHOLD)
-      {
-        matched_exp_id = min_delta_id;
-        action = CREATE_EDGE;
-      }
-
-      if (current_exp != (unsigned)matched_exp_id)
-      {
-        if (matched_exp_id == -1)
-        {
-          create_experience();
-          action = CREATE_NODE;
-        }
-        else
-        {
-          current_exp = matched_exp_id;
-          if (action == NO_ACTION)
-          {
-            action = SET_NODE;
-          }
-        }
-      }
-      else if (current_vt == prev_vt)
-      {
-        create_experience();
-        action = CREATE_NODE;
-      }
-    }
-  }
-
-  return action;
-}
-
-void PosecellNetwork::create_view_template()
-{
-  PosecellVisualTemplate * pcvt;
-  visual_templates.resize(visual_templates.size() + 1);
-  pcvt = &visual_templates[visual_templates.size() - 1];
-  pcvt->pc_x = x();
-  pcvt->pc_y = y();
-  pcvt->pc_th = th();
-  pcvt->decay = VT_ACTIVE_DECAY;
-
-}
-
-void PosecellNetwork::on_view_template(unsigned int vt, double vt_rad)
-{
-  PosecellVisualTemplate * pcvt;
-  if (vt >= visual_templates.size())
-  {
-    // must be a new template
-    create_view_template();
-    assert(vt == visual_templates.size()-1);
-  }
-  else
-  {
-    // the template must exist
-    pcvt = &visual_templates[vt];
-
-    // this prevents energy injected in recently created vt's
-    if (vt < (visual_templates.size() - 10))
-    {
-      if (vt != current_vt)
-      {
-      } else {
-        pcvt->decay += VT_ACTIVE_DECAY;
-      }
-
-      // this line is magic. ask michael about it
-      double energy = PC_VT_INJECT_ENERGY * 1.0 / 30.0 * (30.0 - exp(1.2 * pcvt->decay));
-      if (energy > 0)
-      {
-		vt_delta_pc_th = vt_rad / (2.0*M_PI) * PC_DIM_TH;
-		double pc_th_corrected = pcvt->pc_th + vt_rad / (2.0*M_PI) * PC_DIM_TH;
-		if (pc_th_corrected < 0) 
-			pc_th_corrected = PC_DIM_TH + pc_th_corrected;
-		if (pc_th_corrected >= PC_DIM_TH)
-			pc_th_corrected = pc_th_corrected - PC_DIM_TH;
-        inject((int)pcvt->pc_x, (int)pcvt->pc_y, (int)pc_th_corrected, energy);
-      }
-    }
-  }
-
-  for (unsigned int i=0; i < visual_templates.size(); i++)
-  {
-    visual_templates[i].decay -= PC_VT_RESTORE;
-    if (visual_templates[i].decay < VT_ACTIVE_DECAY)
-      visual_templates[i].decay = VT_ACTIVE_DECAY;
-  }
-
-  prev_vt = current_vt;
-  current_vt = vt;
-
-vt_update = true;
-}
 
 } // namespace ratslam
 
