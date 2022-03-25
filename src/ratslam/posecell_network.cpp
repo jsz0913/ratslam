@@ -62,7 +62,6 @@ bool PosecellNetwork::inject(int act_x, int act_y, int act_z, double energy)
 
   if (act_x < PC_DIM_XY && act_x >= 0 && act_y < PC_DIM_XY && act_y >= 0 && act_z < PC_DIM_TH && act_z >= 0)
     posecells[act_z][act_y][act_x] += energy;
-
   return true;
 }
 
@@ -72,7 +71,6 @@ bool PosecellNetwork::excite(void)
 
   // set all of pca_new to 0
   memset(pca_new_memory, 0, posecells_memory_size);
-
   // loop in all three dimensions
   for (i = 0; i < PC_DIM_XY; i++)
   {
@@ -88,20 +86,17 @@ bool PosecellNetwork::excite(void)
       }
     }
   }
-
-  //  pc.Posecells = pca_new;
+  // 直接内存来实现重新赋值操作
+  // pc.Posecells = pca_new;
   memcpy(posecells_memory, pca_new_memory, posecells_memory_size);
   return true;
-
 }
 
 bool PosecellNetwork::inhibit(void)
 {
   int i, j, k;
-
   // set pca_new to 0
   memset(pca_new_memory, 0, posecells_memory_size);
-
   // loop through all dimensions
   for (i = 0; i < PC_DIM_XY; i++)
   {
@@ -111,22 +106,22 @@ bool PosecellNetwork::inhibit(void)
       {
         if (posecells[k][j][i] != 0)
         {
-          // if there is energy in the current posecell,
-          // spread the energy
+          // if there is energy in the current posecell, spread the energy
+	  // 使用权重矩阵修改后给pca_new
           pose_cell_inhibit_helper(i, j, k);
         }
       }
     }
   }
-
+  // 这里直接实际存储位置相减 x = x - w*x
+  // w*x保存在pca_new_memory
   for (i = 0; i < posecells_elements; i++)
   {
     posecells_memory[i] -= pca_new_memory[i];
   }
-
   return true;
 }
-
+// 同样直接对内存操作
 bool PosecellNetwork::global_inhibit()
 {
   int i;
@@ -152,18 +147,14 @@ bool PosecellNetwork::normalise(void)
   {
     total += posecells_memory[i];
   }
-
   assert(total > 0);
-
   for (i = 0; i < posecells_elements; i++)
   {
     posecells_memory[i] /= total;
     //assert(posecells_memory[i] >= 0);
     //assert(!isnan(posecells_memory[i]));
   }
-
   return true;
-
 }
 
 bool PosecellNetwork::path_integration(double vtrans, double vrot)
@@ -179,69 +170,48 @@ bool PosecellNetwork::path_integration(double vtrans, double vrot)
     vtrans = -vtrans;
     angle_to_add = M_PI;
   }
-  // % shift in each th given by the th
-  // for dir_pc=1:PARAMS.PC_DIM_TH
+	
+  // shift in each th given by the th
   for (dir_pc = 0; dir_pc < PC_DIM_TH; dir_pc++)
   {
-
-    // % radians
-    // dir = (dir_pc - 1) * pc.PC_C_SIZE_TH;
+    // radians dir = (dir_pc - 1) * pc.PC_C_SIZE_TH
+    // 计算每一层的角度，注意angle_to_add
     double dir = dir_pc * PC_C_SIZE_TH + angle_to_add;
 
     double dir90, weight_sw, weight_se, weight_nw, weight_ne;
     int i, j;
-
-    // % rotate the pc.Posecells instead of implementing for four quadrants
+    // rotate the pc.Posecells instead of implementing for four quadrants
     // pca90 = rot90(pc.Posecells(:,:,dir_pc), floor(dir *2/pi));
     rot90_square(posecells[dir_pc], PC_DIM_XY, (int)floor(dir * 2.0 / M_PI));
-
     // dir90 = dir - floor(dir *2/pi) * pi/2;
     dir90 = dir - floor(dir * 2 / M_PI) * M_PI / 2;
-
-    // % extend the pc.Posecells one unit in each direction (max supported at the moment)
-    // % work out the weight contribution to the NE cell from the SW, NW, SE cells
-    // % given vtrans and the direction
-    // % weight_sw = v * cos(th) * v * sin(th)
-    // % weight_se = (1 - v * cos(th)) * v * sin(th)
-    // % weight_nw = (1 - v * sin(th)) * v * sin(th)
-    // % weight_ne = 1 - weight_sw - weight_se - weight_nw
-    // % think in terms of NE divided into 4 rectangles with the sides
-    // % given by vtrans and the angle
-    // pca_new=zeros(PARAMS.PC_DIM_XY+2);
+    // extend the pc.Posecells one unit in each direction (max supported at the moment)
+    // work out the weight contribution to the NE cell from the SW, NW, SE cells
+    // given vtrans and the direction
+    // weight_sw = v * cos(th) * v * sin(th)
+    // weight_se = (1 - v * cos(th)) * v * sin(th)
+    // weight_nw = (1 - v * sin(th)) * v * sin(th)
+    // weight_ne = 1 - weight_sw - weight_se - weight_nw
+    // think in terms of NE divided into 4 rectangles with the sides given by vtrans and the angle
+   
+    // pca_new = zeros(PARAMS.PC_DIM_XY+2);
     memset(pca_new_memory, 0, sizeof(double) * (PC_DIM_XY + 2) * (PC_DIM_XY + 2));
-
+    
     // pca_new(2:end-1,2:end-1) = pca90;
     for (j = 0; j < PC_DIM_XY; j++)
     {
       memcpy(&pca_new_rot_ptr[j + 1][1], &posecells[dir_pc][j][0], sizeof(double) * PC_DIM_XY);
     }
 
-    // weight_sw = vtrans^2 *cos(dir90) * sin(dir90);
     weight_sw = vtrans * vtrans * cos(dir90) * sin(dir90);
-
-    // weight_se = vtrans*sin(dir90) - vtrans^2 *cos(dir90) * sin(dir90);
-    weight_se = //vtrans*sin(dir90) - vtrans*vtrans*cos(dir90)*sin(dir90);
-        vtrans * sin(dir90) * (1.0 - vtrans * cos(dir90));
-
-    // weight_nw = vtrans*cos(dir90) - vtrans^2 *cos(dir90) * sin(dir90);
-    weight_nw = // vtrans*cos(dir90) - vtrans*vtrans*cos(dir90)*sin(dir90);
-        vtrans * cos(dir90) * (1.0 - vtrans * sin(dir90));
-
-    // weight_ne = 1.0 - weight_sw - weight_se - weight_nw;
+    weight_se = vtrans * sin(dir90) * (1.0 - vtrans * cos(dir90));
+    weight_nw = vtrans * cos(dir90) * (1.0 - vtrans * sin(dir90));
     weight_ne = 1.0 - weight_sw - weight_se - weight_nw;
 
-    /* if (weight_sw < 0 || weight_se < 0 || weight_nw < 0 || weight_ne < 0)
-     {
-     printf("WARNING: weights are negative, vtrans(%f) is either negative or too big\n", vtrans);
-     printf("WARNING: continuing, but expect possible failures soon! Update POSECELL_VTRANS_SCALING to fix this.\n", vtrans);
-     }*/
-
-    // % circular shift and multiple by the contributing weight
-    // % copy those shifted elements for the wrap around
+    // circular shift and multiple by the contributing weight copy those shifted elements for the wrap around
     // pca_new = pca_new.*weight_ne + [pca_new(:,end) pca_new(:,1:end-1)].*weight_nw + [pca_new(end,:); pca_new(1:end-1,:)].*weight_se + circshift(pca_new, [1 1]).*weight_sw;
     // first element
     pca_new_rot_ptr2[0][0] = pca_new_rot_ptr[0][0] * weight_ne + pca_new_rot_ptr[0][PC_DIM_XY + 1] * weight_se + pca_new_rot_ptr[PC_DIM_XY + 1][0] * weight_nw;
-
     // first row
     for (i = 1; i < PC_DIM_XY + 2; i++)
     {
@@ -252,21 +222,17 @@ bool PosecellNetwork::path_integration(double vtrans, double vrot)
     {
       // first column
       pca_new_rot_ptr2[j][0] = pca_new_rot_ptr[j][0] * weight_ne + pca_new_rot_ptr[j][PC_DIM_XY + 1] * weight_se + pca_new_rot_ptr[j - 1][0] * weight_nw;
-
       // all the rest
       for (i = 1; i < PC_DIM_XY + 2; i++)
       {
         pca_new_rot_ptr2[j][i] = pca_new_rot_ptr[j][i] * weight_ne + pca_new_rot_ptr[j][i - 1] * weight_se + pca_new_rot_ptr[j - 1][i] * weight_nw;
       }
     }
-
     circshift2d(pca_new_rot_ptr[0], posecells_plane_th, PC_DIM_XY + 2, PC_DIM_XY + 2, 1, 1);
-
     for (i = 0; i < (PC_DIM_XY + 2) * (PC_DIM_XY + 2); i++)
     {
       pca_new_rot_ptr2[0][i] += pca_new_rot_ptr[0][i] * weight_sw;
     }
-
     // pca90 = pca_new(2:end-1,2:end-1);
     for (j = 0; j < PC_DIM_XY; j++)
     {
@@ -275,28 +241,23 @@ bool PosecellNetwork::path_integration(double vtrans, double vrot)
         posecells[dir_pc][j][i] = pca_new_rot_ptr2[j + 1][i + 1];
       }
     }
-
+    // 先y后x
     // pca90(2:end,1) = pca90(2:end,1) + pca_new(3:end-1,end);
     for (i = 1; i < PC_DIM_XY; i++)
     {
       posecells[dir_pc][0][i] += pca_new_rot_ptr2[PC_DIM_XY + 1][i + 1];
     }
-
     // pca90(1,2:end) = pca90(1,2:end) + pca_new(end,3:end-1);
     for (j = 1; j < PC_DIM_XY; j++)
     {
       posecells[dir_pc][j][0] += pca_new_rot_ptr2[j + 1][PC_DIM_XY + 1];
     }
-
     // pca90(1,1) = pca90(1,1) + pca_new(end:end);
     posecells[dir_pc][0][0] += pca_new_rot_ptr2[PC_DIM_XY + 1][PC_DIM_XY + 1];
 
-    // % unrotate the pose cell xy layer
+    // unrotate the pose cell xy layer
     // pc.Posecells(:,:,dir_pc) = rot90(pca90, 4 - floor(dir * 2/pi));
     rot90_square(posecells[dir_pc], PC_DIM_XY, 4 - (int)floor(dir * 2.0 / M_PI));
-    //end
-
-    // end
   }
 
   // % Path Integration - Theta
@@ -365,6 +326,55 @@ bool PosecellNetwork::path_integration(double vtrans, double vrot)
 
   return true;
 }
+
+// 使用权重矩阵更新到pca_new上
+bool PosecellNetwork::pose_cell_excite_helper(int x, int y, int z)
+{
+  int xl, yl, zl, xw, yw, zw, excite_index = 0;
+  // excite_index 和 循环顺序一样 z y x
+  // loop in all dimensions
+  // 使用warp 权重矩阵的范围 
+  for (zl = z; zl < z + PC_W_E_DIM; zl++)
+  {
+    for (yl = y; yl < y + PC_W_E_DIM; yl++)
+    {
+      for (xl = x; xl < x + PC_W_E_DIM; xl++)
+      {
+        // generate indices by wrapping where necessary
+	// 针对 x y z 的周围
+        xw = PC_E_XY_WRAP[xl];
+        yw = PC_E_XY_WRAP[yl];
+        zw = PC_E_TH_WRAP[zl];
+        // for every pose cell, multiply the current energy by
+        // a pdf to spread the energy (PC_W_EXCITE is a 3d pdf)
+        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_EXCITE[excite_index++];
+      }
+    }
+  }
+  return true;
+}
+
+bool PosecellNetwork::pose_cell_inhibit_helper(int x, int y, int z)
+{
+  int xl, yl, zl, xw, yw, zw, inhib_index = 0;
+  // loop through all the dimensions
+  for (zl = z; zl < z + PC_W_I_DIM; zl++)
+  {
+    for (yl = y; yl < y + PC_W_I_DIM; yl++)
+    {
+      for (xl = x; xl < x + PC_W_I_DIM; xl++)
+      {
+        // generate indices by wrapping where necessary
+        xw = PC_I_XY_WRAP[xl];
+        yw = PC_I_XY_WRAP[yl];
+        zw = PC_I_TH_WRAP[zl];
+        // spread the energy using a pdf
+        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_INHIB[inhib_index++];
+      }
+    }
+  }
+  return true;
+}
 	
 void PosecellNetwork::create_experience()
 {
@@ -377,57 +387,6 @@ void PosecellNetwork::create_experience()
   exp->th_pc = th();
   exp->vt_id = current_vt;
   pcvt->exps.push_back(current_exp);
-}
-
-bool PosecellNetwork::pose_cell_excite_helper(int x, int y, int z)
-{
-  int xl, yl, zl, xw, yw, zw, excite_index = 0;
-
-  // loop in all dimensions
-  for (zl = z; zl < z + PC_W_E_DIM; zl++)
-  {
-    for (yl = y; yl < y + PC_W_E_DIM; yl++)
-    {
-      for (xl = x; xl < x + PC_W_E_DIM; xl++)
-      {
-        // generate indices by wrapping where necessary
-        xw = PC_E_XY_WRAP[xl];
-        yw = PC_E_XY_WRAP[yl];
-        zw = PC_E_TH_WRAP[zl];
-
-        // for every pose cell, multiply the current energy by
-        // a pdf to spread the energy (PC_W_EXCITE is a 3d pdf)
-        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_EXCITE[excite_index++];
-      }
-    }
-  }
-
-  return true;
-}
-
-bool PosecellNetwork::pose_cell_inhibit_helper(int x, int y, int z)
-{
-  int xl, yl, zl, xw, yw, zw, inhib_index = 0;
-
-  // loop through all the dimensions
-  for (zl = z; zl < z + PC_W_I_DIM; zl++)
-  {
-    for (yl = y; yl < y + PC_W_I_DIM; yl++)
-    {
-      for (xl = x; xl < x + PC_W_I_DIM; xl++)
-      {
-        // generate indices by wrapping where necessary
-        xw = PC_I_XY_WRAP[xl];
-        yw = PC_I_XY_WRAP[yl];
-        zw = PC_I_TH_WRAP[zl];
-
-        // spread the energy using a pdf
-        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_INHIB[inhib_index++];
-      }
-    }
-  }
-
-  return true;
 }
 
 	
@@ -575,7 +534,7 @@ double PosecellNetwork::get_min_delta(double d1, double d2, double max)
   return min(absval, max - absval);
 }
 
-
+// 循环移位 array to array_buffer
 void PosecellNetwork::circshift2d(double * array, double * array_buffer, int dimx, int dimy, int shiftx, int shifty)
 {
   if (shifty == 0)
@@ -584,7 +543,6 @@ void PosecellNetwork::circshift2d(double * array, double * array_buffer, int dim
     {
       return;
     }
-
     memcpy(array_buffer, array, dimx * dimy * sizeof(double));
   }
   else if (shifty > 0)
@@ -621,22 +579,18 @@ void PosecellNetwork::circshift2d(double * array, double * array_buffer, int dim
     }
   }
 }
-
+	
+// 旋转矩阵 rot * 90度
 int PosecellNetwork::rot90_square(double ** array, int dim, int rot)
 {
   double centre = (double)(dim - 1) / 2.0f;
-
   double a, b, c, d;
-
   double tmp_new, tmp_old;
-
   int i, j, quad, id, jd, is1, js1;
-
   if (rot < 0)
   {
     rot += 4;
   }
-
   switch (rot % 4)
   {
     case 0:
@@ -760,7 +714,7 @@ void PosecellNetwork::pose_cell_builder()
   }
 
   // for path integration
-  // 每一个指针指向一层 一个指头 一个指向尾？？ 为什么加2？
+  // gcInZPlaneNew 使用pca_new_memory的(PC_DIM_XY + 2) * (PC_DIM_XY + 2)
   pca_new_rot_ptr = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
   pca_new_rot_ptr2 = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
   for (i = 0; i < PC_DIM_XY + 2; i++)
@@ -776,7 +730,6 @@ void PosecellNetwork::pose_cell_builder()
 
   // th y x
   posecells[(int)best_th][(int)best_y][(int)best_x] = 1;
-
 	
   // set up the wrap lookups
   PC_W_E_DIM_HALF = (int)floor((double)PC_W_E_DIM / 2.0);
