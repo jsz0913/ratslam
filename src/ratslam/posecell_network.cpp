@@ -14,9 +14,6 @@ namespace ratslam
 
 PosecellNetwork::PosecellNetwork(ptree settings)
 {
-  /*
-   ** pose cell constants.
-   */
   get_setting_from_ptree(PC_DIM_XY, settings, "pc_dim_xy", 21);
   get_setting_from_ptree(PC_DIM_TH, settings, "pc_dim_th", 36);
 	
@@ -30,186 +27,34 @@ PosecellNetwork::PosecellNetwork(ptree settings)
   get_setting_from_ptree(PC_VT_INJECT_ENERGY, settings, "pc_vt_inject_energy", 0.15);
   get_setting_from_ptree(PC_CELL_X_SIZE, settings, "pc_cell_x_size", 1.0);
   get_setting_from_ptree(EXP_DELTA_PC_THRESHOLD, settings, "exp_delta_pc_threshold", 2.0);
-
   get_setting_from_ptree(PC_VT_RESTORE, settings, "pc_vt_restore", 0.05);
 
   // the starting position within the posecell network
   best_x = floor((double)PC_DIM_XY / 2.0);
   best_y = floor((double)PC_DIM_XY / 2.0);
   best_th = floor((double)PC_DIM_TH / 2.0);
-
+  // exp vt
   current_exp = 0;
   current_vt = 0;
-
-  pose_cell_builder();
+  // 
+  pose_cell_builder();//
 
   odo_update = false;
   vt_update = false;
 }
-
-void PosecellNetwork::pose_cell_builder()
-{
-  int i, j;
-
-  PC_C_SIZE_TH = (2.0 * M_PI) / PC_DIM_TH;
-
-  // set the sizes
-  posecells_memory_size = sizeof(Posecell) * PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
 	
-  posecells_elements = PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
-
-  // allocate the memory 一级指针  zero all the memory
-  posecells_memory = (Posecell *)malloc((size_t)posecells_memory_size);
-  pca_new_memory = (Posecell *)malloc((size_t)posecells_memory_size);
-  memset(posecells_memory, 0, (size_t)posecells_memory_size);
-  memset(pca_new_memory, 0, (size_t)posecells_memory_size);
-
-  // allocate first level pointers
-  // 三级指针存的是PC_DIM_TH个二级指针
-  posecells = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
-  pca_new = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
-
-  for (i = 0; i < PC_DIM_TH; i++)
-  {
-    // allocate second level pointers
-    // 二级指针存的是PC_DIM_XY个一级指针
-    posecells[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
-    pca_new[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
-    for (j = 0; j < PC_DIM_XY; j++)
-    {
-      // TRICKY! point second level pointers at already allocated memory
-      // 一级指针指向一行   i = PC_DIM_TH   j = PC_DIM_XY
-      posecells[i][j] = &posecells_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
-      pca_new[i][j] = &pca_new_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
-    }
-  }
-
-  // for path integration
-  pca_new_rot_ptr = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
-  pca_new_rot_ptr2 = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
-  for (i = 0; i < PC_DIM_XY + 2; i++)
-  {
-    pca_new_rot_ptr[i] = &pca_new_memory[(i * (PC_DIM_XY + 2))];
-    pca_new_rot_ptr2[i] = &pca_new_memory[(PC_DIM_XY + 2) * (PC_DIM_XY + 2) + (i * (PC_DIM_XY + 2))];
-  }
-
-  posecells_plane_th = (Posecell *)malloc(sizeof(Posecell) * (PC_DIM_XY + 2) * (PC_DIM_XY + 2));
-
-  PC_W_EXCITE = (double *)malloc(sizeof(double) * PC_W_E_DIM * PC_W_E_DIM * PC_W_E_DIM);
-  PC_W_INHIB = (double *)malloc(sizeof(double) * PC_W_I_DIM * PC_W_I_DIM * PC_W_I_DIM);
-
-  posecells[(int)best_th][(int)best_y][(int)best_x] = 1;
-
-  // set up the wrap lookups
-  PC_W_E_DIM_HALF = (int)floor((double)PC_W_E_DIM / 2.0);
-  PC_W_I_DIM_HALF = (int)floor((double)PC_W_I_DIM / 2.0);
-
-  PC_E_XY_WRAP = (int *)malloc((PC_DIM_XY + PC_W_E_DIM - 1) * sizeof(int));
-  PC_E_TH_WRAP = (int *)malloc((PC_DIM_TH + PC_W_E_DIM - 1) * sizeof(int));
-  PC_I_XY_WRAP = (int *)malloc((PC_DIM_XY + PC_W_I_DIM - 1) * sizeof(int));
-  PC_I_TH_WRAP = (int *)malloc((PC_DIM_TH + PC_W_I_DIM - 1) * sizeof(int));
-
-  generate_wrap(PC_E_XY_WRAP, PC_DIM_XY - PC_W_E_DIM_HALF, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_W_E_DIM_HALF);
-  generate_wrap(PC_E_TH_WRAP, PC_DIM_TH - PC_W_E_DIM_HALF, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_W_E_DIM_HALF);
-  generate_wrap(PC_I_XY_WRAP, PC_DIM_XY - PC_W_I_DIM_HALF, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_W_I_DIM_HALF);
-  generate_wrap(PC_I_TH_WRAP, PC_DIM_TH - PC_W_I_DIM_HALF, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_W_I_DIM_HALF);
-
-  PC_CELLS_TO_AVG = 3;
-  PC_AVG_XY_WRAP = (int *)malloc((PC_DIM_XY + 2 * PC_CELLS_TO_AVG) * sizeof(int));
-  PC_AVG_TH_WRAP = (int *)malloc((PC_DIM_TH + 2 * PC_CELLS_TO_AVG) * sizeof(int));
-
-  generate_wrap(PC_AVG_XY_WRAP, PC_DIM_XY - PC_CELLS_TO_AVG, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_CELLS_TO_AVG);
-  generate_wrap(PC_AVG_TH_WRAP, PC_DIM_TH - PC_CELLS_TO_AVG, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_CELLS_TO_AVG);
-
-  // sine and cosine lookups
-  PC_XY_SUM_SIN_LOOKUP = (double *)malloc(PC_DIM_XY * sizeof(double));
-  PC_XY_SUM_COS_LOOKUP = (double *)malloc(PC_DIM_XY * sizeof(double));
-  PC_TH_SUM_SIN_LOOKUP = (double *)malloc(PC_DIM_TH * sizeof(double));
-  PC_TH_SUM_COS_LOOKUP = (double *)malloc(PC_DIM_TH * sizeof(double));
-
-  for (i = 0; i < PC_DIM_XY; i++)
-  {
-    PC_XY_SUM_SIN_LOOKUP[i] = sin((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_XY);
-    PC_XY_SUM_COS_LOOKUP[i] = cos((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_XY);
-  }
-
-  for (i = 0; i < PC_DIM_TH; i++)
-  {
-    PC_TH_SUM_SIN_LOOKUP[i] = sin((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_TH);
-    PC_TH_SUM_COS_LOOKUP[i] = cos((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_TH);
-  }
-
-  double total = 0;
-  int k, next = 0;
-  int dim_centre = PC_W_E_DIM / 2;
-
-  for (k = 0; k < PC_W_E_DIM; k++)
-  {
-    for (j = 0; j < PC_W_E_DIM; j++)
-    {
-      for (i = 0; i < PC_W_E_DIM; i++)
-      {
-        PC_W_EXCITE[next] = norm2d(PC_W_E_VAR, i, j, k, dim_centre);
-        total += PC_W_EXCITE[next];
-        next++;
-      }
-    }
-  }
-
-  for (next = 0; next < PC_W_E_DIM * PC_W_E_DIM * PC_W_E_DIM; next++)
-  {
-    PC_W_EXCITE[next] /= total;
-  }
-
-  total = 0;
-  dim_centre = PC_W_I_DIM / 2;
-  next = 0;
-  for (k = 0; k < PC_W_I_DIM; k++)
-  {
-    for (j = 0; j < PC_W_I_DIM; j++)
-    {
-      for (i = 0; i < PC_W_I_DIM; i++)
-      {
-        PC_W_INHIB[next] = norm2d(PC_W_I_VAR, i, j, k, dim_centre);
-        total += PC_W_INHIB[next];
-        next++;
-      }
-    }
-  }
-
-  for (next = 0; next < PC_W_I_DIM * PC_W_I_DIM * PC_W_I_DIM; next++)
-  {
-    PC_W_INHIB[next] /= total;
-  }
-}
-
 	
-PosecellNetwork::~PosecellNetwork()
+void PosecellNetwork::on_odo(double vtrans, double vrot, double time_diff_s)
 {
-  int i;
-  for (i = 0; i < PC_DIM_TH; i++)
-  {
-    free(posecells[i]);
-    free(pca_new[i]);
-  }
-  free(posecells);
-  free(pca_new);
-  free(pca_new_rot_ptr);
-  free(pca_new_rot_ptr2);
-  free(PC_W_EXCITE);
-  free(PC_W_INHIB);
-  free(PC_E_XY_WRAP);
-  free(PC_I_XY_WRAP);
-  free(PC_E_TH_WRAP);
-  free(PC_I_TH_WRAP);
-  free(PC_AVG_XY_WRAP);
-  free(PC_AVG_TH_WRAP);
-  free(PC_XY_SUM_SIN_LOOKUP);
-  free(PC_XY_SUM_COS_LOOKUP);
-  free(PC_TH_SUM_SIN_LOOKUP);
-  free(PC_TH_SUM_COS_LOOKUP);
-  free(posecells_memory);
-  free(pca_new_memory);
+  vtrans = vtrans * time_diff_s;
+  vrot = vrot * time_diff_s;
+  excite();
+  inhibit();
+  global_inhibit();
+  normalise();
+  path_integration(vtrans, vrot);
+  find_best();
+  odo_update = true;
 }
 
 bool PosecellNetwork::inject(int act_x, int act_y, int act_z, double energy)
@@ -520,7 +365,73 @@ bool PosecellNetwork::path_integration(double vtrans, double vrot)
 
   return true;
 }
+	
+void PosecellNetwork::create_experience()
+{
+  PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
+  experiences.resize(experiences.size() + 1);
+  current_exp = experiences.size() - 1;
+  PosecellExperience * exp = &experiences[current_exp];
+  exp->x_pc = x();
+  exp->y_pc = y();
+  exp->th_pc = th();
+  exp->vt_id = current_vt;
+  pcvt->exps.push_back(current_exp);
+}
 
+bool PosecellNetwork::pose_cell_excite_helper(int x, int y, int z)
+{
+  int xl, yl, zl, xw, yw, zw, excite_index = 0;
+
+  // loop in all dimensions
+  for (zl = z; zl < z + PC_W_E_DIM; zl++)
+  {
+    for (yl = y; yl < y + PC_W_E_DIM; yl++)
+    {
+      for (xl = x; xl < x + PC_W_E_DIM; xl++)
+      {
+        // generate indices by wrapping where necessary
+        xw = PC_E_XY_WRAP[xl];
+        yw = PC_E_XY_WRAP[yl];
+        zw = PC_E_TH_WRAP[zl];
+
+        // for every pose cell, multiply the current energy by
+        // a pdf to spread the energy (PC_W_EXCITE is a 3d pdf)
+        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_EXCITE[excite_index++];
+      }
+    }
+  }
+
+  return true;
+}
+
+bool PosecellNetwork::pose_cell_inhibit_helper(int x, int y, int z)
+{
+  int xl, yl, zl, xw, yw, zw, inhib_index = 0;
+
+  // loop through all the dimensions
+  for (zl = z; zl < z + PC_W_I_DIM; zl++)
+  {
+    for (yl = y; yl < y + PC_W_I_DIM; yl++)
+    {
+      for (xl = x; xl < x + PC_W_I_DIM; xl++)
+      {
+        // generate indices by wrapping where necessary
+        xw = PC_I_XY_WRAP[xl];
+        yw = PC_I_XY_WRAP[yl];
+        zw = PC_I_TH_WRAP[zl];
+
+        // spread the energy using a pdf
+        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_INHIB[inhib_index++];
+      }
+    }
+  }
+
+  return true;
+}
+
+	
+	
 double PosecellNetwork::find_best()
 {
   int i, j, k;
@@ -664,56 +575,6 @@ double PosecellNetwork::get_min_delta(double d1, double d2, double max)
   return min(absval, max - absval);
 }
 
-bool PosecellNetwork::pose_cell_excite_helper(int x, int y, int z)
-{
-  int xl, yl, zl, xw, yw, zw, excite_index = 0;
-
-  // loop in all dimensions
-  for (zl = z; zl < z + PC_W_E_DIM; zl++)
-  {
-    for (yl = y; yl < y + PC_W_E_DIM; yl++)
-    {
-      for (xl = x; xl < x + PC_W_E_DIM; xl++)
-      {
-        // generate indices by wrapping where necessary
-        xw = PC_E_XY_WRAP[xl];
-        yw = PC_E_XY_WRAP[yl];
-        zw = PC_E_TH_WRAP[zl];
-
-        // for every pose cell, multiply the current energy by
-        // a pdf to spread the energy (PC_W_EXCITE is a 3d pdf)
-        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_EXCITE[excite_index++];
-      }
-    }
-  }
-
-  return true;
-}
-
-bool PosecellNetwork::pose_cell_inhibit_helper(int x, int y, int z)
-{
-  int xl, yl, zl, xw, yw, zw, inhib_index = 0;
-
-  // loop through all the dimensions
-  for (zl = z; zl < z + PC_W_I_DIM; zl++)
-  {
-    for (yl = y; yl < y + PC_W_I_DIM; yl++)
-    {
-      for (xl = x; xl < x + PC_W_I_DIM; xl++)
-      {
-        // generate indices by wrapping where necessary
-        xw = PC_I_XY_WRAP[xl];
-        yw = PC_I_XY_WRAP[yl];
-        zw = PC_I_TH_WRAP[zl];
-
-        // spread the energy using a pdf
-        pca_new[zw][yw][xw] += posecells[z][y][x] * PC_W_INHIB[inhib_index++];
-      }
-    }
-  }
-
-  return true;
-}
 
 void PosecellNetwork::circshift2d(double * array, double * array_buffer, int dimx, int dimy, int shiftx, int shifty)
 {
@@ -832,6 +693,7 @@ int PosecellNetwork::rot90_square(double ** array, int dim, int rot)
   return true;
 }
 
+
 int PosecellNetwork::generate_wrap(int * wrap, int start1, int end1, int start2, int end2, int start3, int end3)
 {
   int i, j;
@@ -840,12 +702,10 @@ int PosecellNetwork::generate_wrap(int * wrap, int start1, int end1, int start2,
   {
     wrap[i] = j;
   }
-
   for (j = start2; j < end2; i++, j++)
   {
     wrap[i] = j;
   }
-
   for (j = start3; j < end3; i++, j++)
   {
     wrap[i] = j;
@@ -855,23 +715,181 @@ int PosecellNetwork::generate_wrap(int * wrap, int start1, int end1, int start2,
 
 double PosecellNetwork::norm2d(double var, int x, int y, int z, int dim_centre)
 {
-  return 1.0 / (var * sqrt(2.0 * M_PI))
-      * exp((-(x - dim_centre) * (x - dim_centre) - (y - dim_centre) * (y - dim_centre) - (z - dim_centre) * (z - dim_centre)) / (2.0 * var * var));
+  return 1.0 / (var * sqrt(2.0 * M_PI)) * exp((-(x - dim_centre) * (x - dim_centre) - (y - dim_centre) * (y - dim_centre) - (z - dim_centre) * (z - dim_centre)) / (2.0 * var * var));
 }
 
-void PosecellNetwork::create_experience()
+
+// 初始化各种常量 分配好内存空间
+void PosecellNetwork::pose_cell_builder()
 {
-  PosecellVisualTemplate * pcvt = &visual_templates[current_vt];
-  experiences.resize(experiences.size() + 1);
-  current_exp = experiences.size() - 1;
-  PosecellExperience * exp = &experiences[current_exp];
-  exp->x_pc = x();
-  exp->y_pc = y();
-  exp->th_pc = th();
-  exp->vt_id = current_vt;
-  pcvt->exps.push_back(current_exp);
+  // for 循环
+  int i, j;
+
+  PC_C_SIZE_TH = (2.0 * M_PI) / PC_DIM_TH;
+
+  // set the sizes
+  posecells_memory_size = sizeof(Posecell) * PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
+	
+  posecells_elements = PC_DIM_XY * PC_DIM_XY * PC_DIM_TH;
+
+  // allocate the memory 一级指针  zero all the memory
+  posecells_memory = (Posecell *)malloc((size_t)posecells_memory_size);
+  pca_new_memory = (Posecell *)malloc((size_t)posecells_memory_size);
+	
+  memset(posecells_memory, 0, (size_t)posecells_memory_size);
+  memset(pca_new_memory, 0, (size_t)posecells_memory_size);
+
+  // allocate first level pointers
+  // 三级指针存的是PC_DIM_TH个二级指针
+  posecells = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
+  pca_new = (Posecell ***)malloc(sizeof(Posecell**) * PC_DIM_TH);
+
+  for (i = 0; i < PC_DIM_TH; i++)
+  {
+    // allocate second level pointers
+    // 二级指针存的是PC_DIM_XY个一级指针
+    posecells[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
+    pca_new[i] = (Posecell **)malloc(sizeof(Posecell*) * PC_DIM_XY);
+    for (j = 0; j < PC_DIM_XY; j++)
+    {
+      // TRICKY! point second level pointers at already allocated memory
+      // 一级指针指向一行   i = PC_DIM_TH   j = PC_DIM_XY
+      posecells[i][j] = &posecells_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
+      pca_new[i][j] = &pca_new_memory[(i * PC_DIM_XY + j) * PC_DIM_XY];
+    }
+  }
+
+  // for path integration
+  // 每一个指针指向一层 一个指头 一个指向尾？？ 为什么加2？
+  pca_new_rot_ptr = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
+  pca_new_rot_ptr2 = (Posecell **)malloc(sizeof(Posecell*) * (PC_DIM_XY + 2));
+  for (i = 0; i < PC_DIM_XY + 2; i++)
+  {
+    pca_new_rot_ptr[i] = &pca_new_memory[(i * (PC_DIM_XY + 2))];
+    pca_new_rot_ptr2[i] = &pca_new_memory[(PC_DIM_XY + 2) * (PC_DIM_XY + 2) + (i * (PC_DIM_XY + 2))];
+  }
+  posecells_plane_th = (Posecell *)malloc(sizeof(Posecell) * (PC_DIM_XY + 2) * (PC_DIM_XY + 2));
+
+  // 权重矩阵
+  PC_W_EXCITE = (double *)malloc(sizeof(double) * PC_W_E_DIM * PC_W_E_DIM * PC_W_E_DIM);
+  PC_W_INHIB = (double *)malloc(sizeof(double) * PC_W_I_DIM * PC_W_I_DIM * PC_W_I_DIM);
+
+  // th y x
+  posecells[(int)best_th][(int)best_y][(int)best_x] = 1;
+
+	
+  // set up the wrap lookups
+  PC_W_E_DIM_HALF = (int)floor((double)PC_W_E_DIM / 2.0);
+  PC_W_I_DIM_HALF = (int)floor((double)PC_W_I_DIM / 2.0);
+  // 长度由两边的边缘时为中心时决定  不去计较具体 注意是int
+  PC_E_XY_WRAP = (int *)malloc((PC_DIM_XY + PC_W_E_DIM - 1) * sizeof(int));
+  PC_E_TH_WRAP = (int *)malloc((PC_DIM_TH + PC_W_E_DIM - 1) * sizeof(int));
+  PC_I_XY_WRAP = (int *)malloc((PC_DIM_XY + PC_W_I_DIM - 1) * sizeof(int));
+  PC_I_TH_WRAP = (int *)malloc((PC_DIM_TH + PC_W_I_DIM - 1) * sizeof(int));
+  // int * wrap, int start1, int end1, int start2, int end2, int start3, int end3
+  generate_wrap(PC_E_XY_WRAP, PC_DIM_XY - PC_W_E_DIM_HALF, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_W_E_DIM_HALF);
+  generate_wrap(PC_E_TH_WRAP, PC_DIM_TH - PC_W_E_DIM_HALF, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_W_E_DIM_HALF);
+  generate_wrap(PC_I_XY_WRAP, PC_DIM_XY - PC_W_I_DIM_HALF, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_W_I_DIM_HALF);
+  generate_wrap(PC_I_TH_WRAP, PC_DIM_TH - PC_W_I_DIM_HALF, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_W_I_DIM_HALF);
+  // 位置
+  PC_CELLS_TO_AVG = 3;
+  PC_AVG_XY_WRAP = (int *)malloc((PC_DIM_XY + 2 * PC_CELLS_TO_AVG) * sizeof(int));
+  PC_AVG_TH_WRAP = (int *)malloc((PC_DIM_TH + 2 * PC_CELLS_TO_AVG) * sizeof(int));
+  generate_wrap(PC_AVG_XY_WRAP, PC_DIM_XY - PC_CELLS_TO_AVG, PC_DIM_XY, 0, PC_DIM_XY, 0, PC_CELLS_TO_AVG);
+  generate_wrap(PC_AVG_TH_WRAP, PC_DIM_TH - PC_CELLS_TO_AVG, PC_DIM_TH, 0, PC_DIM_TH, 0, PC_CELLS_TO_AVG);
+  // sine and cosine lookups
+  PC_XY_SUM_SIN_LOOKUP = (double *)malloc(PC_DIM_XY * sizeof(double));
+  PC_XY_SUM_COS_LOOKUP = (double *)malloc(PC_DIM_XY * sizeof(double));
+  PC_TH_SUM_SIN_LOOKUP = (double *)malloc(PC_DIM_TH * sizeof(double));
+  PC_TH_SUM_COS_LOOKUP = (double *)malloc(PC_DIM_TH * sizeof(double));
+  for (i = 0; i < PC_DIM_XY; i++)
+  {
+    PC_XY_SUM_SIN_LOOKUP[i] = sin((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_XY);
+    PC_XY_SUM_COS_LOOKUP[i] = cos((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_XY);
+  }
+  for (i = 0; i < PC_DIM_TH; i++)
+  {
+    PC_TH_SUM_SIN_LOOKUP[i] = sin((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_TH);
+    PC_TH_SUM_COS_LOOKUP[i] = cos((double)(i + 1) * 2.0 * M_PI / (double)PC_DIM_TH);
+  }
+
+  // 激励矩阵 一维排列
+  double total = 0;
+  int k, next = 0;// for 循环
+  int dim_centre = PC_W_E_DIM / 2;
+  for (k = 0; k < PC_W_E_DIM; k++)
+  {
+    for (j = 0; j < PC_W_E_DIM; j++)
+    {
+      for (i = 0; i < PC_W_E_DIM; i++)
+      {
+	// norm2d 找到对应的三维位置
+        PC_W_EXCITE[next] = norm2d(PC_W_E_VAR, i, j, k, dim_centre);
+        total += PC_W_EXCITE[next];
+        next++;
+      }
+    }
+  }
+  for (next = 0; next < PC_W_E_DIM * PC_W_E_DIM * PC_W_E_DIM; next++)
+  {
+    PC_W_EXCITE[next] /= total; //归一化
+  }
+
+  total = 0;
+  dim_centre = PC_W_I_DIM / 2;
+  next = 0;
+  for (k = 0; k < PC_W_I_DIM; k++)
+  {
+    for (j = 0; j < PC_W_I_DIM; j++)
+    {
+      for (i = 0; i < PC_W_I_DIM; i++)
+      {
+        PC_W_INHIB[next] = norm2d(PC_W_I_VAR, i, j, k, dim_centre);
+        total += PC_W_INHIB[next];
+        next++;
+      }
+    }
+  }
+  for (next = 0; next < PC_W_I_DIM * PC_W_I_DIM * PC_W_I_DIM; next++)
+  {
+    PC_W_INHIB[next] /= total;
+  }
+	
 }
 
+	
+	
+PosecellNetwork::~PosecellNetwork()
+{
+  int i;
+  for (i = 0; i < PC_DIM_TH; i++)
+  {
+    free(posecells[i]);
+    free(pca_new[i]);
+  }
+  free(posecells);
+  free(pca_new);
+	
+  free(pca_new_rot_ptr);
+  free(pca_new_rot_ptr2);
+	
+  free(PC_W_EXCITE);
+  free(PC_W_INHIB);
+  free(PC_E_XY_WRAP);
+  free(PC_I_XY_WRAP);
+  free(PC_E_TH_WRAP);
+  free(PC_I_TH_WRAP);
+  free(PC_AVG_XY_WRAP);
+  free(PC_AVG_TH_WRAP);
+  free(PC_XY_SUM_SIN_LOOKUP);
+  free(PC_XY_SUM_COS_LOOKUP);
+  free(PC_TH_SUM_SIN_LOOKUP);
+  free(PC_TH_SUM_COS_LOOKUP);
+  // 最开始初始化的
+  free(posecells_memory);
+  free(pca_new_memory);
+}
+	
 
 PosecellNetwork::PosecellAction PosecellNetwork::get_action()
 {
@@ -967,20 +985,6 @@ PosecellNetwork::PosecellAction PosecellNetwork::get_action()
   }
 
   return action;
-}
-
-void PosecellNetwork::on_odo(double vtrans, double vrot, double time_diff_s)
-{
-  vtrans = vtrans * time_diff_s;
-  vrot = vrot * time_diff_s;
-
-  excite();
-  inhibit();
-  global_inhibit();
-  normalise();
-  path_integration(vtrans, vrot);
-  find_best();
-  odo_update = true;
 }
 
 void PosecellNetwork::create_view_template()
